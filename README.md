@@ -46,16 +46,19 @@ Abra o endereço informado pelo Vite no terminal. A configuração atual não ex
 | `npm run dev` | Inicia o servidor de desenvolvimento com proxy RSS local. |
 | `npm run build` | Verifica os tipos com TypeScript e gera a aplicação em `dist/`. |
 | `npm run preview` | Permite conferir o build localmente, também com proxy RSS. |
+| `npm test` | Executa os testes do proxy RSS. |
 
-O projeto ainda não possui uma suíte de testes automatizados.
+Os testes cobrem validação de URLs e bloqueio de destinos internos no proxy RSS.
 
 ## Funcionamento e dados
 
 O serviço consulta as fontes habilitadas, normaliza os itens RSS e Atom e exibe as notícias conforme as consultas terminam. A ordenação considera a data e intercala fontes para diversificar a leitura.
 
-Cada feed fornece até seis itens por consulta. O serviço utiliza cache em memória por dez minutos e armazena até 180 notícias da última edição no navegador.
+Cada feed fornece até 20 itens por consulta. O TanStack Query mantém os resultados por dez minutos e consulta novamente nesse intervalo enquanto a página está ativa. O botão Atualizar realiza uma nova consulta, sem reutilizar o cache HTTP. Até 300 notícias da última edição ficam no navegador por até 24 horas, para exibição inicial durante o carregamento.
 
-A consulta tenta primeiro o endpoint local `/api/rss?url=`, implementado em `vite.config.ts`. Quando necessário, utiliza rss2json, CodeTabs, AllOrigins e corsproxy.io como alternativas. Algumas fontes do catálogo são consultadas por meio do Google News RSS.
+A consulta tenta primeiro `/api/rss?url=`, disponível no Vite e como uma função do Netlify. Ambos utilizam `server/rss-proxy.mjs`, com suporte a redirecionamentos, compressão e codificação dos feeds. O endpoint aceita apenas HTTPS público, valida o destino a cada redirecionamento e limita o tamanho e o tempo das respostas. Quando necessário, utiliza rss2json, CodeTabs, AllOrigins e corsproxy.io como alternativas. Algumas fontes do catálogo são consultadas por meio do Google News RSS.
+
+A interface informa o progresso e lista as fontes que não forneceram notícias na consulta.
 
 Preferências, feeds cadastrados, recortes e histórico de leitura ficam no `localStorage`. Não há contas ou sincronização entre dispositivos. Limpar os dados do site remove essas informações.
 
@@ -65,11 +68,11 @@ As consultas podem passar pelos serviços externos citados acima. Imagens são c
 
 Execute `npm run build` e publique a pasta `dist/` em uma hospedagem estática.
 
-O middleware `/api/rss` pertence aos servidores de desenvolvimento e preview do Vite e **não acompanha o build estático**. Nesse cenário, o carregamento depende dos serviços externos de fallback ou de um endpoint RSS implementado na infraestrutura de produção.
+No Netlify, importe o repositório e utilize as configurações de `netlify.toml`. O deploy inclui a função `netlify/functions/rss.mjs`, que atende `/api/rss`. Em outras hospedagens estáticas, o carregamento depende dos proxies externos ou da implantação de um endpoint equivalente.
 
 Para publicar em um subdiretório, como em um site de projeto do GitHub Pages, configure a opção `base` do Vite com o caminho correspondente antes do build.
 
-`npm run preview` serve para conferência local. O proxy atual aceita URLs fornecidas pelo cliente; uma implementação pública deve restringir destinos e acesso à rede interna, além de limitar requisições.
+`npm run preview` serve para conferência local. Para instalações com tráfego elevado, configure também limites de requisições na infraestrutura de hospedagem.
 
 ## Limitações
 
@@ -89,7 +92,9 @@ src/
 ├── services/rssService.ts  # Consulta, normalização e cache dos feeds
 ├── store/useNewsStore.ts   # Estado e persistência das preferências
 └── types/news.ts           # Tipos de notícias e fontes
-vite.config.ts              # Configuração do Vite e proxy RSS local
+server/rss-proxy.mjs         # Consulta segura de feeds no servidor
+netlify/functions/rss.mjs    # Endpoint RSS em produção
+vite.config.ts              # Configuração do Vite e endpoint local
 ```
 
 As fontes e categorias iniciais podem ser ajustadas em [`src/data/defaultFeeds.ts`](src/data/defaultFeeds.ts).

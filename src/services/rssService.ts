@@ -6,14 +6,17 @@ const CODETABS_PROXY_ENDPOINT = 'https://api.codetabs.com/v1/proxy?quest=';
 const ALLORIGINS_RAW_ENDPOINT = 'https://api.allorigins.win/raw?url=';
 const CORSPROXY_ENDPOINT = 'https://corsproxy.io/?url=';
 
-const MAX_ITEMS_PER_FEED = 6;
+const MAX_ITEMS_PER_FEED = 20;
 const CONCURRENCY_LIMIT = 8;
-const CLIENT_CACHE_TTL_MS = 10 * 60 * 1000; // 10 minutos
-const FETCH_TIMEOUT_MS = 3500; // 3.5s máximo por tentativa para não travar a fila
+const FETCH_TIMEOUT_MS = 10000; // Inclui o tempo de consulta e inicialização do servidor
 const EDITION_STORAGE_KEY = 'panorama-cached-edition-v1';
 
 let isLocalProxyActive = true;
-const feedMemoryCache = new Map<string, { articles: Article[]; expiresAt: number }>();
+export interface FeedLoadStatus {
+  completed: number;
+  total: number;
+  failedSources: string[];
+}
 
 /**
  * Lê a última edição salva no localStorage para exibição instantânea (0ms) ao abrir o site
@@ -23,7 +26,8 @@ export function getInitialCachedEdition(): Article[] {
     const raw = localStorage.getItem(EDITION_STORAGE_KEY);
     if (!raw) return [];
     const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed : [];
+    return parsed && Date.now() - parsed.savedAt < 24 * 60 * 60 * 1000 &&
+      Array.isArray(parsed.articles) ? parsed.articles : [];
   } catch {
     return [];
   }
@@ -31,12 +35,10 @@ export function getInitialCachedEdition(): Article[] {
 
 function saveCachedEdition(articles: Article[]): void {
   try {
-    if (articles.length > 0) {
-      localStorage.setItem(
-        EDITION_STORAGE_KEY,
-        JSON.stringify(articles.slice(0, 180))
-      );
-    }
+    localStorage.setItem(
+      EDITION_STORAGE_KEY,
+      JSON.stringify({ savedAt: Date.now(), articles: articles.slice(0, 300) })
+    );
   } catch {
     // Ignora caso localStorage esteja cheio
   }
@@ -293,6 +295,7 @@ async function fetchViaLocalProxy(feedUrl: string, source: FeedSource): Promise<
   const encodedUrl = encodeURIComponent(feedUrl.trim());
   const response = await fetch(`${LOCAL_PROXY_ENDPOINT}${encodedUrl}`, {
     signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+    cache: 'no-store',
   });
 
   if (!response.ok) {
@@ -327,7 +330,8 @@ async function fetchViaRss2Json(feedUrl: string, source: FeedSource): Promise<Ar
 
   const encodedUrl = encodeURIComponent(feedUrl.trim());
   const response = await fetch(`${RSS2JSON_ENDPOINT}${encodedUrl}`, {
-    signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+    signal: AbortSignal.timeout(3500),
+    cache: 'no-store',
   });
 
   if (!response.ok) {
@@ -352,7 +356,8 @@ async function fetchViaExternalXmlProxy(
 ): Promise<Article[]> {
   const encodedUrl = encodeURIComponent(feedUrl.trim());
   const response = await fetch(`${proxyBase}${encodedUrl}`, {
-    signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+    signal: AbortSignal.timeout(3500),
+    cache: 'no-store',
   });
 
   if (!response.ok) {
@@ -371,45 +376,26 @@ async function fetchViaExternalXmlProxy(
 
 /**
  * Busca um único feed RSS tentando:
- * 1. Proxy local do servidor Vite (/api/rss) — sem limite de requisições nem bloqueio CORS
- * 2. Conversor rss2json e proxies externos de fallback
- * 3. URL secundária (fallbackUrl) caso a URL principal do portal esteja indisponível
+ * Consulta o endpoint próprio (Vite/Netlify) nas URLs principal e secundária.
+ * Depois tenta conversores e proxies públicos se o portal não responder.
  */
 export async function fetchSingleFeed(source: FeedSource): Promise<Article[]> {
-  const cacheKey = `${source.id}::${source.url}`;
-  const cached = feedMemoryCache.get(cacheKey);
-  if (cached && cached.expiresAt > Date.now()) {
-    // Atualiza categoria/cor caso o usuário tenha editado
-    return cached.articles.map((art) => ({
-      ...art,
-      category: source.category,
-      color: source.color,
-      sourceName: source.name,
-    }));
-  }
-
   const urlsToTry = [source.url, source.fallbackUrl].filter(Boolean) as string[];
 
   for (const candidateUrl of urlsToTry) {
-    // 1. Tenta o proxy local do servidor (mais rápido e sem bloqueio de CORS/rate-limit)
+    // Endpoint próprio, disponível tanto localmente como no Netlify.
     try {
       const articles = await fetchViaLocalProxy(candidateUrl, source);
-      feedMemoryCache.set(cacheKey, {
-        articles,
-        expiresAt: Date.now() + CLIENT_CACHE_TTL_MS,
-      });
       return articles;
     } catch {
       // Continua para os fallbacks externos
     }
+  }
 
+  for (const candidateUrl of urlsToTry) {
     // 2. Tenta rss2json
     try {
       const articles = await fetchViaRss2Json(candidateUrl, source);
-      feedMemoryCache.set(cacheKey, {
-        articles,
-        expiresAt: Date.now() + CLIENT_CACHE_TTL_MS,
-      });
       return articles;
     } catch {
       // Continua
@@ -431,10 +417,6 @@ export async function fetchSingleFeed(source: FeedSource): Promise<Article[]> {
           candidateUrl,
           source
         );
-        feedMemoryCache.set(cacheKey, {
-          articles,
-          expiresAt: Date.now() + CLIENT_CACHE_TTL_MS,
-        });
         return articles;
       } catch {
         // Continua
@@ -479,10 +461,16 @@ function interleaveArticlesBySource(sortedArticles: Article[]): Article[] {
  */
 export async function fetchAllActiveFeeds(
   sources: FeedSource[],
-  onProgress?: (partialArticles: Article[]) => void
+  onProgress?: (partialArticles: Article[]) => void,
+  onStatus?: (status: FeedLoadStatus) => void
 ): Promise<Article[]> {
   const enabledSources = sources.filter((source) => source.enabled);
 
+  const failedSources: string[] = [];
+  const reportStatus = (completed: number) => onStatus?.({
+    completed, total: enabledSources.length, failedSources: [...failedSources],
+  });
+  reportStatus(0);
   if (enabledSources.length === 0) {
     return [];
   }
@@ -507,6 +495,8 @@ export async function fetchAllActiveFeeds(
         if (!nextSource) break;
         const articles = await fetchSingleFeed(nextSource);
         completedFeeds += 1;
+        if (articles.length === 0) failedSources.push(nextSource.name);
+        reportStatus(completedFeeds);
         if (articles.length > 0) {
           allArticles.push(...articles);
           // Dispara atualização visual imediata nos primeiros portais e a cada 3 portais concluídos
@@ -526,6 +516,7 @@ export async function fetchAllActiveFeeds(
   );
 
   const finalArticles = interleaveArticlesBySource(sorted);
+  onProgress?.(finalArticles);
   saveCachedEdition(finalArticles);
   return finalArticles;
 }

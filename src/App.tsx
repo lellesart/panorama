@@ -32,6 +32,7 @@ import { PASTEL_COLOR_MAP } from './data/defaultFeeds';
 import {
   fetchAllActiveFeeds,
   getInitialCachedEdition,
+  FeedLoadStatus,
 } from './services/rssService';
 import { useNewsStore } from './store/useNewsStore';
 import { Article, NavigationFilter, PastelColor, ViewMode } from './types/news';
@@ -157,6 +158,9 @@ export function App() {
   const [streamingArticles, setStreamingArticles] = useState<Article[]>(() =>
     getInitialCachedEdition()
   );
+  const [feedStatus, setFeedStatus] = useState<FeedLoadStatus>({
+    completed: 0, total: 0, failedSources: [],
+  });
 
   // Busca de feeds RSS reais com React Query + Streaming Progressivo
   const {
@@ -169,25 +173,28 @@ export function App() {
       'rss-feeds',
       feeds
         .filter((f) => f.enabled)
-        .map((f) => `${f.id}:${f.url}`)
+        .map((f) => `${f.id}:${f.url}:${f.fallbackUrl || ''}`)
         .join('|'),
     ],
-    queryFn: () =>
+    queryFn: ({ signal }) =>
       fetchAllActiveFeeds(feeds, (partial) => {
-        setStreamingArticles(partial);
+        if (!signal.aborted) setStreamingArticles(partial);
+      }, (status) => {
+        if (!signal.aborted) setFeedStatus(status);
       }),
     staleTime: 1000 * 60 * 10, // 10 minutos de cache
-    refetchOnWindowFocus: false,
+    refetchInterval: 1000 * 60 * 10,
+    refetchOnWindowFocus: true,
   });
 
   // Usa os artigos finais da query ou os artigos parciais em streaming / cache local
   const fetchedArticles = useMemo(() => {
-    if (queryArticles && queryArticles.length > 0) {
+    if (!isFetching && queryArticles !== undefined) {
       return queryArticles;
     }
     const enabledIds = new Set(feeds.filter((f) => f.enabled).map((f) => f.id));
     return streamingArticles.filter((art) => enabledIds.has(art.sourceId));
-  }, [queryArticles, streamingArticles, feeds]);
+  }, [queryArticles, streamingArticles, feeds, isFetching]);
 
   // Lista de categorias únicas presentes nos feeds
   const categories = useMemo(() => {
@@ -624,6 +631,22 @@ export function App() {
                     ? highlightKeywords.join(', ')
                     : 'Nenhum'}
                 </p>
+                <p role="status" className="mt-2 text-sm text-[#5C5A55]">
+                  {isFetching
+                    ? `Consultando fontes: ${feedStatus.completed} de ${feedStatus.total}.`
+                    : `${feedStatus.total - feedStatus.failedSources.length} de ${feedStatus.total} fontes responderam.`}
+                </p>
+                {feedStatus.failedSources.length > 0 && (
+                  <details className="mt-2 max-w-xl text-sm text-[#5C5A55]">
+                    <summary className="cursor-pointer underline underline-offset-4">
+                      Fontes sem notícias nesta consulta ({feedStatus.failedSources.length})
+                    </summary>
+                    <p className="mt-2 break-words">
+                      {feedStatus.failedSources.join(', ')}. Tente Atualizar novamente;
+                      o feed pode estar indisponível ou bloqueando a consulta.
+                    </p>
+                  </details>
+                )}
               </div>
 
               <div className="flex flex-wrap items-center gap-3">
