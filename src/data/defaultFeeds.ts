@@ -329,6 +329,57 @@ export const DEFAULT_FEEDS: FeedSource[] = [
     color: 'peach',
     enabled: true,
   },
+
+  // ==========================================
+  // TECNOLOGIA
+  // ==========================================
+  {
+    id: 'the-verge',
+    name: 'The Verge',
+    url: 'https://www.theverge.com/rss/index.xml',
+    fallbackUrl:
+      'https://news.google.com/rss/search?q=site:theverge.com&hl=en-US&gl=US&ceid=US:en',
+    category: 'Tecnologia',
+    color: 'slate',
+    enabled: true,
+  },
+  {
+    id: 'techcrunch',
+    name: 'TechCrunch',
+    url: 'https://techcrunch.com/feed/',
+    fallbackUrl:
+      'https://news.google.com/rss/search?q=site:techcrunch.com&hl=en-US&gl=US&ceid=US:en',
+    category: 'Tecnologia',
+    color: 'slate',
+    enabled: true,
+  },
+  {
+    id: 'reuters-tech',
+    name: 'Reuters • Technology',
+    url: 'https://news.google.com/rss/search?q=site:reuters.com/technology&hl=en-US&gl=US&ceid=US:en',
+    category: 'Tecnologia',
+    color: 'slate',
+    enabled: true,
+  },
+  {
+    id: '404-media',
+    name: '404 Media',
+    url: 'https://www.404media.co/rss/',
+    fallbackUrl:
+      'https://news.google.com/rss/search?q=site:404media.co&hl=en-US&gl=US&ceid=US:en',
+    category: 'Tecnologia',
+    color: 'slate',
+    enabled: true,
+  },
+  {
+    id: 'gizmodo',
+    name: 'Gizmodo',
+    url: 'https://gizmodo.com/feed',
+    fallbackUrl: 'https://gizmodo.uol.com.br/feed/',
+    category: 'Tecnologia',
+    color: 'slate',
+    enabled: true,
+  },
 ];
 
 export const PASTEL_COLOR_MAP: Record<
@@ -374,5 +425,10 @@ export const PASTEL_COLOR_MAP: Record<
     bg: 'bg-[#F5D5CB]',
     label: 'Peach (Cultura)',
     hex: '#F5D5CB',
+  },
+  slate: {
+    bg: 'bg-[#D8E2EC]',
+    label: 'Slate (Tecnologia)',
+    hex: '#D8E2EC',
   },
 };

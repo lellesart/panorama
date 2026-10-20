@@ -6,12 +6,14 @@ export type PastelColor =
   | 'sky'
   | 'rose'
   | 'coral'
-  | 'mint';
+  | 'mint'
+  | 'slate';
 
 export type ViewMode = 'magazine' | 'cards' | 'compact';
 
 export type NavigationFilter =
   | { type: 'all' }
+  | { type: 'custom' }
   | { type: 'saved' }
   | { type: 'category'; category: string }
   | { type: 'source'; sourceId: string };

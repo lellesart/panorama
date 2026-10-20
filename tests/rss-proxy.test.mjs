@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import rssProxy, { isPublicAddress } from '../server/rss-proxy.mjs';
+import { extractReadableArticle } from '../server/article-reader.mjs';
 
 test('accepts public addresses and rejects internal and mapped addresses', () => {
   for (const address of ['8.8.8.8', '1.1.1.1', '2606:4700:4700::1111']) {
@@ -32,4 +33,27 @@ test('blocks an internal destination before opening an upstream connection', asy
   const res = await rssProxy(new Request('https://panorama.test/api/rss?url=https://127.0.0.1/feed'));
   assert.equal(res.status, 502);
   assert.match((await res.json()).error, /internet pública/);
+});
+
+test('extractReadableArticle extracts full paragraphs, og:image and author from HTML', () => {
+  const sampleHtml = `
+    <html>
+      <head>
+        <meta property="og:image" content="https://example.com/capa.jpg" />
+        <meta name="author" content="Redação Panorama" />
+      </head>
+      <body>
+        <article>
+          <h2>Subtítulo da Reportagem</h2>
+          <p>Este é o primeiro parágrafo completo da reportagem com mais de quarenta e cinco caracteres para validação do extrator.</p>
+          <p>Este é o segundo parágrafo completo da matéria trazendo mais contexto jornalístico sobre o assunto em pauta.</p>
+        </article>
+      </body>
+    </html>
+  `;
+  const result = extractReadableArticle(sampleHtml);
+  assert.equal(result.thumbnail, 'https://example.com/capa.jpg');
+  assert.equal(result.author, 'Redação Panorama');
+  assert.equal(result.paragraphCount, 3);
+  assert.match(result.contentHtml, /<h2>Subtítulo da Reportagem<\/h2>/);
 });

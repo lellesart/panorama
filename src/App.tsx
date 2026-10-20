@@ -32,11 +32,13 @@ import {
 import { PASTEL_COLOR_MAP } from './data/defaultFeeds';
 import {
   fetchAllActiveFeeds,
+  fetchFullArticleContent,
+  formatReadableHtml,
   getInitialCachedEdition,
   FeedLoadStatus,
 } from './services/rssService';
 import { useNewsStore } from './store/useNewsStore';
-import { Article, NavigationFilter, PastelColor, ViewMode } from './types/news';
+import { Article, PastelColor, ViewMode } from './types/news';
 
 /**
  * Formata data de publicação em formato legível de jornal/relógio
@@ -112,20 +114,26 @@ const HighlightedTitle: React.FC<{ title: string; keywords: string[] }> = ({
 export function App() {
   const {
     feeds,
+    customFeedIds,
     mutedKeywords,
     highlightKeywords,
     viewMode,
+    navFilter,
+    activeArticle,
     savedArticles,
     readArticleIds,
     toggleFeed,
     addFeed,
     removeFeed,
     resetDefaultFeeds,
+    setCustomFeedIds,
     addMutedKeyword,
     removeMutedKeyword,
     addHighlightKeyword,
     removeHighlightKeyword,
     setViewMode,
+    setNavFilter,
+    setActiveArticle,
     toggleSaveArticle,
     markAsRead,
     toggleReadStatus,
@@ -133,14 +141,40 @@ export function App() {
   } = useNewsStore();
 
   // Estado de navegação e UI local
-  const [navFilter, setNavFilter] = useState<NavigationFilter>({ type: 'all' });
   const [searchQuery, setSearchQuery] = useState('');
   const [visibleCount, setVisibleCount] = useState(24);
-  const [activeArticle, setActiveArticle] = useState<Article | null>(null);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
   const [isCategoriesOpen, setIsCategoriesOpen] = useState(true);
   const [isPortalsOpen, setIsPortalsOpen] = useState(false);
+  const [isCustomPickerOpen, setIsCustomPickerOpen] = useState(false);
+  const [draftCustomIds, setDraftCustomIds] = useState<string[]>(customFeedIds);
+  const [customSaveFeedback, setCustomSaveFeedback] = useState(false);
+
+  // Sincroniza rascunho de portais do "Seu Feed" e abre seletor se ainda estiver vazio
+  useEffect(() => {
+    setDraftCustomIds(customFeedIds);
+    if (navFilter.type === 'custom' && customFeedIds.length === 0) {
+      setIsCustomPickerOpen(true);
+    }
+  }, [navFilter, customFeedIds]);
+
+  const handleToggleDraftFeed = (feedId: string) => {
+    setDraftCustomIds((prev) =>
+      prev.includes(feedId)
+        ? prev.filter((id) => id !== feedId)
+        : [...prev, feedId]
+    );
+  };
+
+  const handleSaveCustomFeed = () => {
+    setCustomFeedIds(draftCustomIds);
+    setCustomSaveFeedback(true);
+    if (draftCustomIds.length > 0) {
+      setIsCustomPickerOpen(false);
+    }
+    setTimeout(() => setCustomSaveFeedback(false), 2500);
+  };
   const [deferredInstallPrompt, setDeferredInstallPrompt] = useState<
     (Event & { prompt: () => Promise<void>; userChoice: Promise<{ outcome: string }> }) | null
   >(null);
@@ -260,7 +294,12 @@ export function App() {
         if (isMuted) return false;
       }
 
-      // 2. Filtro de Categoria ou Fonte da Sidebar
+      // 2. Filtro de "Seu Feed", Categoria ou Fonte da Sidebar
+      if (navFilter.type === 'custom') {
+        if (!customFeedIds.includes(article.sourceId)) {
+          return false;
+        }
+      }
       if (navFilter.type === 'category' && article.category !== navFilter.category) {
         return false;
       }
@@ -279,7 +318,21 @@ export function App() {
 
       return true;
     });
-  }, [fetchedArticles, savedArticles, navFilter, mutedKeywords, searchQuery]);
+  }, [
+    fetchedArticles,
+    savedArticles,
+    navFilter,
+    customFeedIds,
+    mutedKeywords,
+    searchQuery,
+  ]);
+
+  // Quantidade de artigos disponíveis no "Seu Feed"
+  const customFeedArticlesCount = useMemo(() => {
+    if (customFeedIds.length === 0) return 0;
+    const setIds = new Set(customFeedIds);
+    return fetchedArticles.filter((a) => setIds.has(a.sourceId)).length;
+  }, [fetchedArticles, customFeedIds]);
 
   // Artigos visíveis na página atual (paginação progressiva para performance de DOM)
   const displayedArticles = useMemo(
@@ -287,11 +340,55 @@ export function App() {
     [filteredArticles, visibleCount]
   );
 
-  // Abrir notícia no Reader Drawer e marcar automaticamente como lida
-  const handleOpenArticle = (article: Article) => {
+  // Abrir notícia no Reader Drawer, marcar como lida e buscar o texto completo da matéria sob demanda
+  const [isLoadingArticleBody, setIsLoadingArticleBody] = useState(false);
+
+  const enrichArticleContent = async (article: Article) => {
+    const plainText = (article.contentHtml || '')
+      .replace(/<[^>]+>/g, '')
+      .trim();
+    const isPlaceholderSnippet = plainText.startsWith('Cobertura atualizada em ');
+
+    if (plainText.length < 700 || isPlaceholderSnippet || !article.thumbnail) {
+      setIsLoadingArticleBody(true);
+      const extracted = await fetchFullArticleContent(article);
+      setIsLoadingArticleBody(false);
+
+      if (extracted) {
+        setActiveArticle((current) => {
+          if (!current || current.id !== article.id) return current;
+          const newHtmlLength = (extracted.contentHtml || '')
+            .replace(/<[^>]+>/g, '')
+            .trim().length;
+          return {
+            ...current,
+            link: extracted.url || current.link,
+            contentHtml:
+              (newHtmlLength > plainText.length || isPlaceholderSnippet) &&
+              extracted.contentHtml
+                ? extracted.contentHtml
+                : current.contentHtml,
+            thumbnail: current.thumbnail || extracted.thumbnail,
+            author: current.author || extracted.author,
+          };
+        });
+      }
+    }
+  };
+
+  const handleOpenArticle = async (article: Article) => {
     markAsRead(article.id);
     setActiveArticle(article);
+    await enrichArticleContent(article);
   };
+
+  // Caso um artigo já estivesse aberto ao recarregar a página, busca o texto completo se ainda estiver resumido
+  useEffect(() => {
+    if (activeArticle) {
+      enrichArticleContent(activeArticle);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeArticle?.id]);
 
   // Adicionar novo feed RSS pelo modal
   const handleAddFeedSubmit = (e: React.FormEvent) => {
@@ -326,6 +423,7 @@ export function App() {
   // Título da seção atual
   const currentViewTitle = useMemo(() => {
     if (navFilter.type === 'all') return 'Edição do Dia — Todas as Fontes';
+    if (navFilter.type === 'custom') return 'Seu Feed — Seleção Pessoal';
     if (navFilter.type === 'saved') return 'Pasta de Recortes Salvos';
     if (navFilter.type === 'category') return `Caderno: ${navFilter.category}`;
     if (navFilter.type === 'source') {
@@ -403,6 +501,26 @@ export function App() {
                 </span>
                 <span className="font-mono text-xs px-1.5 py-0.5 bg-[#F7F4EF] border border-[#141413] rounded-sm">
                   {fetchedArticles.length}
+                </span>
+              </button>
+
+              <button
+                onClick={() => {
+                  setNavFilter({ type: 'custom' });
+                  setIsMobileSidebarOpen(false);
+                }}
+                className={`w-full flex items-center justify-between px-3 py-2 text-sm font-medium rounded-sm border-[1.5px] transition-all ${
+                  navFilter.type === 'custom'
+                    ? 'bg-[#D4E2D4] border-[#141413] shadow-[2px_2px_0px_#141413] font-semibold'
+                    : 'border-transparent hover:bg-[#E5DEC9]/60 hover:border-[#141413]'
+                }`}
+              >
+                <span className="flex items-center gap-2">
+                  <Sparkles className="w-4 h-4" />
+                  Seu Feed
+                </span>
+                <span className="font-mono text-xs px-1.5 py-0.5 bg-[#F7F4EF] border border-[#141413] rounded-sm">
+                  {customFeedArticlesCount}
                 </span>
               </button>
 
@@ -757,6 +875,155 @@ export function App() {
 
         {/* ÁREA DO FEED DE NOTÍCIAS */}
         <main className="flex-1 px-4 md:px-8 py-6 max-w-7xl w-full mx-auto">
+          {/* Painel de Configuração do "Seu Feed" */}
+          {navFilter.type === 'custom' && (
+            <section className="mb-6 bg-[#EFECE6] border-[1.5px] border-[#141413] rounded-sm p-5 shadow-[3px_3px_0px_#141413]">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <h3 className="font-serif text-xl font-bold text-[#141413] flex items-center gap-2">
+                    <Sparkles className="w-5 h-5" />
+                    Portais do Seu Feed ({customFeedIds.length} selecionados)
+                  </h3>
+                  <p className="text-xs font-mono text-[#5C5A55] mt-0.5">
+                    Escolha quais portais deseja acompanhar nesta página e clique em
+                    Salvar para gravar no seu aparelho.
+                  </p>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  {customSaveFeedback && (
+                    <span className="px-2.5 py-1 bg-[#D4E2D4] border border-[#141413] rounded-sm font-mono text-xs font-semibold flex items-center gap-1">
+                      <Check className="w-3.5 h-3.5" /> Salvo no aparelho!
+                    </span>
+                  )}
+                  <button
+                    onClick={() => setIsCustomPickerOpen((prev) => !prev)}
+                    className="px-3.5 py-1.5 bg-[#F7F4EF] hover:bg-[#E5DEC9] border-[1.5px] border-[#141413] rounded-sm shadow-[2px_2px_0px_#141413] font-mono text-xs font-semibold uppercase flex items-center gap-1.5"
+                  >
+                    <SlidersHorizontal className="w-3.5 h-3.5" />
+                    {isCustomPickerOpen ? 'Ocultar Seleção' : 'Escolher Portais'}
+                  </button>
+                </div>
+              </div>
+
+              {isCustomPickerOpen && (
+                <div className="mt-5 pt-4 border-t-[1.5px] border-[#141413]/20 space-y-5">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setDraftCustomIds(feeds.map((f) => f.id))}
+                        className="px-2.5 py-1 bg-[#F7F4EF] hover:bg-[#E5DEC9] border border-[#141413] rounded-sm font-mono text-xs"
+                      >
+                        Marcar Todos ({feeds.length})
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setDraftCustomIds([])}
+                        className="px-2.5 py-1 bg-[#F7F4EF] hover:bg-[#E5DEC9] border border-[#141413] rounded-sm font-mono text-xs"
+                      >
+                        Limpar Seleção
+                      </button>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={handleSaveCustomFeed}
+                      className="px-5 py-2 bg-[#F3E9C6] hover:bg-[#D4E2D4] border-[1.5px] border-[#141413] rounded-sm shadow-[3px_3px_0px_#141413] hover:shadow-[4px_4px_0px_#141413] font-mono text-xs font-semibold uppercase flex items-center gap-1.5 transition-all"
+                    >
+                      <Check className="w-4 h-4" />
+                      Salvar no Aparelho ({draftCustomIds.length})
+                    </button>
+                  </div>
+
+                  {/* Grade de Portais Agrupados por Caderno */}
+                  <div className="space-y-4">
+                    {categories.map((cat) => {
+                      const categoryFeeds = feeds.filter(
+                        (f) => f.category === cat.name
+                      );
+                      const badgeBg =
+                        PASTEL_COLOR_MAP[cat.color]?.bg || 'bg-[#D0E1EB]';
+
+                      return (
+                        <div
+                          key={cat.name}
+                          className="p-3.5 bg-[#F7F4EF] border-[1.5px] border-[#141413] rounded-sm"
+                        >
+                          <div className="flex items-center justify-between mb-2.5">
+                            <span
+                              className={`px-2 py-0.5 font-mono text-xs font-semibold border border-[#141413] rounded-sm ${badgeBg}`}
+                            >
+                              {cat.name}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const catIds = categoryFeeds.map((f) => f.id);
+                                const allChecked = catIds.every((id) =>
+                                  draftCustomIds.includes(id)
+                                );
+                                if (allChecked) {
+                                  setDraftCustomIds((prev) =>
+                                    prev.filter((id) => !catIds.includes(id))
+                                  );
+                                } else {
+                                  setDraftCustomIds((prev) =>
+                                    Array.from(new Set([...prev, ...catIds]))
+                                  );
+                                }
+                              }}
+                              className="font-mono text-[11px] underline text-[#5C5A55] hover:text-[#141413]"
+                            >
+                              Alternar caderno
+                            </button>
+                          </div>
+
+                          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2">
+                            {categoryFeeds.map((feed) => {
+                              const isChecked = draftCustomIds.includes(feed.id);
+                              return (
+                                <label
+                                  key={feed.id}
+                                  onClick={() => handleToggleDraftFeed(feed.id)}
+                                  className={`cursor-pointer flex items-center justify-between px-3 py-2 rounded-sm border-[1.5px] text-xs font-medium transition-all select-none ${
+                                    isChecked
+                                      ? 'bg-[#D4E2D4] border-[#141413] shadow-[2px_2px_0px_#141413] font-semibold'
+                                      : 'bg-[#EFECE6]/70 border-[#141413]/40 hover:border-[#141413]'
+                                  }`}
+                                >
+                                  <span className="truncate pr-2">{feed.name}</span>
+                                  <span
+                                    className={`w-4 h-4 rounded-sm border border-[#141413] flex items-center justify-center shrink-0 ${
+                                      isChecked ? 'bg-[#141413] text-[#F7F4EF]' : 'bg-[#F7F4EF]'
+                                    }`}
+                                  >
+                                    {isChecked && <Check className="w-3 h-3" />}
+                                  </span>
+                                </label>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  <div className="flex justify-end pt-2">
+                    <button
+                      type="button"
+                      onClick={handleSaveCustomFeed}
+                      className="px-6 py-2.5 bg-[#141413] text-[#F7F4EF] hover:bg-[#141413]/90 rounded-sm shadow-[3px_3px_0px_#5C5A55] font-mono text-xs font-semibold uppercase flex items-center gap-2 transition-all"
+                    >
+                      <Check className="w-4 h-4" />
+                      Salvar Seu Feed ({draftCustomIds.length} portais)
+                    </button>
+                  </div>
+                </div>
+              )}
+            </section>
+          )}
+
           {/* Estado de Carregamento Inicial (apenas se não houver artigos em streaming/cache) */}
           {isLoading && fetchedArticles.length === 0 ? (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
@@ -787,6 +1054,8 @@ export function App() {
               <p className="text-sm text-[#5C5A55] mb-6">
                 {navFilter.type === 'saved'
                   ? 'Você ainda não guardou nenhum recorte de jornal na sua pasta.'
+                  : navFilter.type === 'custom'
+                  ? 'Selecione os portais desejados no painel acima e clique em "Salvar no Aparelho" para montar o Seu Feed.'
                   : 'Verifique se há portais habilitados na barra lateral ou ajuste seus filtros de busca e palavras silenciadas.'}
               </p>
               {navFilter.type !== 'all' && (
@@ -1046,6 +1315,17 @@ export function App() {
               </div>
 
               <div className="flex items-center gap-2">
+                <a
+                  href={activeArticle.link}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="px-3 py-1.5 bg-[#F7F4EF] hover:bg-[#E5DEC9] border-[1.5px] border-[#141413] rounded-sm font-mono text-xs flex items-center gap-1.5 shadow-[2px_2px_0px_#141413]"
+                  title="Abrir matéria original no site do portal"
+                >
+                  <span className="hidden sm:inline">Abrir no Site</span>
+                  <ExternalLink className="w-3.5 h-3.5" />
+                </a>
+
                 <button
                   onClick={() => toggleSaveArticle(activeArticle)}
                   className={`px-3 py-1.5 border-[1.5px] border-[#141413] rounded-sm font-mono text-xs flex items-center gap-1.5 shadow-[2px_2px_0px_#141413] ${
@@ -1107,7 +1387,16 @@ export function App() {
 
                 {/* Divisor Tipográfico */}
                 <div className="border-t-[1.5px] border-b-[1.5px] border-[#141413] py-2 mb-6 flex items-center justify-between font-mono text-[11px] uppercase tracking-widest text-[#5C5A55]">
-                  <span>Modo Leitura Limpa • Papel A4</span>
+                  <span className="flex items-center gap-1.5">
+                    {isLoadingArticleBody ? (
+                      <>
+                        <RefreshCw className="w-3 h-3 animate-spin text-[#141413]" />
+                        Extraindo texto completo da reportagem...
+                      </>
+                    ) : (
+                      'Modo Leitura Completa • Papel A4'
+                    )}
+                  </span>
                   <span>Panorama Reader</span>
                 </div>
 
@@ -1115,9 +1404,10 @@ export function App() {
                 <div
                   className="prose prose-stone max-w-none font-sans text-base leading-relaxed text-[#141413] space-y-4 [&_p]:mb-4 [&_a]:underline [&_a]:font-semibold [&_img]:border-[1.5px] [&_img]:border-[#141413] [&_img]:rounded-sm [&_img]:my-4 [&_h2]:font-serif [&_h2]:text-2xl [&_h2]:font-bold [&_h2]:mt-6 [&_h3]:font-serif [&_h3]:text-xl [&_h3]:font-bold [&_blockquote]:border-l-4 [&_blockquote]:border-[#141413] [&_blockquote]:pl-4 [&_blockquote]:italic [&_blockquote]:bg-[#EFECE6] [&_blockquote]:p-3"
                   dangerouslySetInnerHTML={{
-                    __html:
-                      activeArticle.contentHtml ||
-                      `<p>${activeArticle.contentSnippet}</p>`,
+                    __html: formatReadableHtml(
+                      activeArticle.contentHtml,
+                      activeArticle.contentSnippet
+                    ),
                   }}
                 />
 

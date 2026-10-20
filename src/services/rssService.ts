@@ -45,6 +45,94 @@ function saveCachedEdition(articles: Article[]): void {
 }
 
 /**
+ * Divide textos corridos sem quebra de linha (como o feed/JSON-LD do Metrópoles)
+ * em parágrafos editoriais legíveis de 2 a 3 frases.
+ */
+export function formatReadableHtml(rawHtml: string, fallbackSnippet = ''): string {
+  const sourceHtml = rawHtml?.trim() || `<p>${fallbackSnippet}</p>`;
+  if (!sourceHtml) return '';
+
+  // Se o HTML já possui múltiplos parágrafos curtos/normais ou imagens, verifica apenas se há parágrafos gigantes
+  const doc = new DOMParser().parseFromString(sourceHtml, 'text/html');
+  const paragraphs = Array.from(doc.body.querySelectorAll('p'));
+
+  const splitLongText = (text: string): string[] => {
+    const lines = text
+      .split(/\r?\n+/)
+      .map((l) => l.trim())
+      .filter(Boolean);
+
+    const result: string[] = [];
+    for (const line of lines) {
+      if (line.length <= 400) {
+        result.push(line);
+        continue;
+      }
+      const sentences = line.split(
+        /(?<=[.!?]["”')\]}]?)\s+(?=[A-ZÁÀÂÃÉÊÍÓÔÕÚÇ"“‘0-9])/
+      );
+      let current = '';
+      for (const sentence of sentences) {
+        const s = sentence.trim();
+        if (!s) continue;
+        if (!current) {
+          current = s;
+        } else if (current.length + s.length + 1 <= 400) {
+          current += ` ${s}`;
+        } else {
+          result.push(current);
+          current = s;
+        }
+      }
+      if (current) result.push(current);
+    }
+    return result;
+  };
+
+  // Caso não haja tags <p> ou exista apenas 1 bloco gigante sem quebras
+  if (paragraphs.length <= 1) {
+    const plainText = (doc.body.textContent || '').replace(/[ \t]+/g, ' ').trim();
+    if (plainText.length > 320 || plainText.includes('\n')) {
+      const parts = splitLongText(plainText);
+      if (parts.length > 1) {
+        return parts
+          .map(
+            (p) =>
+              `<p>${p
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')}</p>`
+          )
+          .join('\n');
+      }
+    }
+    return sourceHtml;
+  }
+
+  // Se houver múltiplos <p>, mas algum deles for um bloco único gigante (> 450 caracteres sem quebra)
+  let modified = false;
+  paragraphs.forEach((pNode) => {
+    const hasChildElements = pNode.querySelector('img, a, iframe, strong, em, br');
+    const text = (pNode.textContent || '').trim();
+    if (!hasChildElements && text.length > 450) {
+      const parts = splitLongText(text);
+      if (parts.length > 1) {
+        modified = true;
+        const fragment = doc.createDocumentFragment();
+        parts.forEach((partText) => {
+          const newP = doc.createElement('p');
+          newP.textContent = partText;
+          fragment.appendChild(newP);
+        });
+        pNode.replaceWith(fragment);
+      }
+    }
+  });
+
+  return modified ? doc.body.innerHTML : sourceHtml;
+}
+
+/**
  * Remove tags HTML e entidades comuns para gerar o resumo limpo (contentSnippet)
  */
 function stripHtml(html: string): string {
@@ -519,4 +607,114 @@ export async function fetchAllActiveFeeds(
   onProgress?.(finalArticles);
   saveCachedEdition(finalArticles);
   return finalArticles;
+}
+
+export interface FullArticlePayload {
+  url?: string;
+  contentHtml?: string;
+  thumbnail?: string;
+  author?: string;
+}
+
+const fullArticleCache = new Map<string, FullArticlePayload>();
+
+/**
+ * Extrai parágrafos e metadados no cliente caso o endpoint /api/article não esteja disponível
+ */
+function extractClientSideArticle(html: string): FullArticlePayload {
+  const doc = new DOMParser().parseFromString(html, 'text/html');
+  const ogImg =
+    doc.querySelector('meta[property="og:image"]')?.getAttribute('content') ||
+    doc.querySelector('meta[name="twitter:image"]')?.getAttribute('content') ||
+    undefined;
+  const author =
+    doc.querySelector('meta[name="author"]')?.getAttribute('content') || undefined;
+
+  const root =
+    doc.querySelector('article') ||
+    doc.querySelector('[itemprop="articleBody"]') ||
+    doc.querySelector('main') ||
+    doc.body;
+
+  root
+    ?.querySelectorAll('script, style, nav, header, footer, aside, form, button')
+    .forEach((el) => el.remove());
+
+  const blocks: string[] = [];
+  const seen = new Set<string>();
+
+  root?.querySelectorAll('p, h2, h3, blockquote').forEach((node) => {
+    const tag = node.tagName.toLowerCase();
+    const text = (node.textContent || '').replace(/\s+/g, ' ').trim();
+    if (!text) return;
+    if (tag === 'p' && text.length < 45) return;
+    const key = text.toLowerCase();
+    if (seen.has(key)) return;
+    seen.add(key);
+    const safeText = text
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;');
+    blocks.push(`<${tag}>${safeText}</${tag}>`);
+  });
+
+  return {
+    contentHtml: blocks.join('\n'),
+    thumbnail: ogImg && ogImg.startsWith('http') ? ogImg : undefined,
+    author,
+  };
+}
+
+/**
+ * Busca o texto completo da matéria sob demanda ao abrir o Reader Drawer (Modo Leitura Completa)
+ */
+export async function fetchFullArticleContent(
+  article: Article
+): Promise<FullArticlePayload | null> {
+  if (fullArticleCache.has(article.id)) {
+    return fullArticleCache.get(article.id)!;
+  }
+
+  try {
+    const params = new URLSearchParams({
+      url: article.link,
+      title: article.title,
+      source: article.sourceName,
+    });
+    const response = await fetch(`/api/article?${params.toString()}`, {
+      signal: AbortSignal.timeout(9000),
+    });
+
+    if (response.ok) {
+      const data = (await response.json()) as FullArticlePayload;
+      if (data && data.contentHtml && data.contentHtml.trim().length > 120) {
+        fullArticleCache.set(article.id, data);
+        return data;
+      }
+    }
+  } catch {
+    // Tenta fallback via proxy público se não for link codificado do Google News
+  }
+
+  if (!article.link.includes('news.google.com')) {
+    for (const proxyBase of [CODETABS_PROXY_ENDPOINT, ALLORIGINS_RAW_ENDPOINT]) {
+      try {
+        const res = await fetch(
+          `${proxyBase}${encodeURIComponent(article.link)}`,
+          { signal: AbortSignal.timeout(5000) }
+        );
+        if (!res.ok) continue;
+        const html = await res.text();
+        const extracted = extractClientSideArticle(html);
+        if (extracted.contentHtml && extracted.contentHtml.length > 200) {
+          fullArticleCache.set(article.id, extracted);
+          return extracted;
+        }
+      } catch {
+        // Continua
+      }
+    }
+  }
+
+  return null;
 }

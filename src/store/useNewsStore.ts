@@ -1,7 +1,13 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { DEFAULT_FEEDS } from '../data/defaultFeeds';
-import { Article, FeedSource, PastelColor, ViewMode } from '../types/news';
+import {
+  Article,
+  FeedSource,
+  NavigationFilter,
+  PastelColor,
+  ViewMode,
+} from '../types/news';
 
 interface AddFeedPayload {
   name: string;
@@ -12,9 +18,12 @@ interface AddFeedPayload {
 
 interface NewsState {
   feeds: FeedSource[];
+  customFeedIds: string[];
   mutedKeywords: string[];
   highlightKeywords: string[];
   viewMode: ViewMode;
+  navFilter: NavigationFilter;
+  activeArticle: Article | null;
   savedArticles: Article[];
   readArticleIds: string[];
 
@@ -23,6 +32,7 @@ interface NewsState {
   addFeed: (payload: AddFeedPayload) => void;
   removeFeed: (id: string) => void;
   resetDefaultFeeds: () => void;
+  setCustomFeedIds: (ids: string[]) => void;
 
   // Actions - Keywords
   addMutedKeyword: (keyword: string) => void;
@@ -30,8 +40,12 @@ interface NewsState {
   addHighlightKeyword: (keyword: string) => void;
   removeHighlightKeyword: (keyword: string) => void;
 
-  // Actions - View Mode
+  // Actions - View Mode & Navigation
   setViewMode: (mode: ViewMode) => void;
+  setNavFilter: (filter: NavigationFilter) => void;
+  setActiveArticle: (
+    article: Article | null | ((prev: Article | null) => Article | null)
+  ) => void;
 
   // Actions - Saved & Read History
   toggleSaveArticle: (article: Article) => void;
@@ -45,9 +59,12 @@ export const useNewsStore = create<NewsState>()(
   persist(
     (set, get) => ({
       feeds: DEFAULT_FEEDS,
+      customFeedIds: [],
       mutedKeywords: ['BBB', 'fofoca', 'spoiler'],
       highlightKeywords: [],
       viewMode: 'cards',
+      navFilter: { type: 'all' },
+      activeArticle: null,
       savedArticles: [],
       readArticleIds: [],
 
@@ -87,6 +104,11 @@ export const useNewsStore = create<NewsState>()(
       resetDefaultFeeds: () =>
         set({
           feeds: DEFAULT_FEEDS,
+        }),
+
+      setCustomFeedIds: (ids) =>
+        set({
+          customFeedIds: Array.from(new Set(ids)),
         }),
 
       addMutedKeyword: (keyword) =>
@@ -131,6 +153,16 @@ export const useNewsStore = create<NewsState>()(
 
       setViewMode: (mode) => set({ viewMode: mode }),
 
+      setNavFilter: (filter) => set({ navFilter: filter }),
+
+      setActiveArticle: (articleOrUpdater) =>
+        set((state) => ({
+          activeArticle:
+            typeof articleOrUpdater === 'function'
+              ? articleOrUpdater(state.activeArticle)
+              : articleOrUpdater,
+        })),
+
       toggleSaveArticle: (article) =>
         set((state) => {
           const exists = state.savedArticles.some((item) => item.id === article.id);
@@ -169,7 +201,7 @@ export const useNewsStore = create<NewsState>()(
       clearReadHistory: () => set({ readArticleIds: [] }),
     }),
     {
-      name: 'panorama-storage-v11',
+      name: 'panorama-storage-v12',
     }
   )
 );
