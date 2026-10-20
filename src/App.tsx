@@ -7,6 +7,7 @@ import {
   ChevronDown,
   ChevronRight,
   Clock,
+  Download,
   ExternalLink,
   Eye,
   EyeOff,
@@ -140,6 +141,34 @@ export function App() {
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
   const [isCategoriesOpen, setIsCategoriesOpen] = useState(true);
   const [isPortalsOpen, setIsPortalsOpen] = useState(false);
+  const [deferredInstallPrompt, setDeferredInstallPrompt] = useState<
+    (Event & { prompt: () => Promise<void>; userChoice: Promise<{ outcome: string }> }) | null
+  >(null);
+
+  // Captura o evento de instalação do PWA (Chrome, Edge, Android, Desktop)
+  useEffect(() => {
+    const handleBeforeInstallPrompt = (e: Event) => {
+      e.preventDefault();
+      setDeferredInstallPrompt(
+        e as Event & {
+          prompt: () => Promise<void>;
+          userChoice: Promise<{ outcome: string }>;
+        }
+      );
+    };
+
+    window.addEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
+    return () => {
+      window.removeEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
+    };
+  }, []);
+
+  const handleInstallPwa = async () => {
+    if (!deferredInstallPrompt) return;
+    await deferredInstallPrompt.prompt();
+    await deferredInstallPrompt.userChoice;
+    setDeferredInstallPrompt(null);
+  };
 
   // Reseta a paginação ao trocar de caderno/portal ou buscar
   useEffect(() => {
@@ -565,6 +594,15 @@ export function App() {
 
         {/* Rodapé da Sidebar */}
         <div className="p-4 border-t-[1.5px] border-[#141413] bg-[#EFECE6] space-y-2">
+          {deferredInstallPrompt && (
+            <button
+              onClick={handleInstallPwa}
+              className="w-full py-2 px-3 bg-[#D4E2D4] hover:bg-[#E5DEC9] border-[1.5px] border-[#141413] rounded-sm shadow-[2px_2px_0px_#141413] transition-all flex items-center justify-center gap-2 font-mono text-xs font-semibold uppercase tracking-wider"
+            >
+              <Download className="w-4 h-4" />
+              Instalar App Panorama
+            </button>
+          )}
           <button
             onClick={() => setIsSettingsOpen(true)}
             className="w-full py-2.5 px-3 bg-[#F3E9C6] hover:bg-[#E5DEC9] border-[1.5px] border-[#141413] rounded-sm shadow-[3px_3px_0px_#141413] hover:shadow-[4px_4px_0px_#141413] hover:-translate-y-0.5 transition-all flex items-center justify-center gap-2 font-mono text-xs font-semibold uppercase tracking-wider"

@@ -13,6 +13,15 @@ export const DEFAULT_FEEDS: FeedSource[] = [
     enabled: true,
   },
   {
+    id: 'g1-eleicoes',
+    name: 'G1 Eleições',
+    url: 'https://news.google.com/rss/search?q=site:g1.globo.com/politica/eleicoes&hl=pt-BR&gl=BR&ceid=BR:pt-419',
+    fallbackUrl: 'https://g1.globo.com/rss/g1/politica/',
+    category: 'Política',
+    color: 'sky',
+    enabled: true,
+  },
+  {
     id: 'folha-poder',
     name: 'Folha • Poder',
     url: 'https://feeds.folha.uol.com.br/poder/rss091.xml',

@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <!-- Fundo Papel Editorial Quente -->
+  <rect width="512" height="512" rx="84" fill="#F7F4EF" />
+  <!-- Sombra Neo-Brutalista -->
+  <rect x="64" y="64" width="396" height="396" rx="28" fill="#141413" />
+  <!-- Cartão Principal Amarelo Manteiga Pastel -->
+  <rect x="48" y="48" width="396" height="396" rx="28" fill="#F3E9C6" stroke="#141413" stroke-width="16" />
+  <!-- Fio Duplo de Jornal no Topo -->
+  <line x1="92" y1="112" x2="400" y2="112" stroke="#141413" stroke-width="10" stroke-linecap="round" />
+  <line x1="92" y1="130" x2="400" y2="130" stroke="#141413" stroke-width="4" stroke-linecap="round" />
+  <!-- Monograma Editorial "P" Serifado -->
+  <text
+    x="246"
+    y="345"
+    text-anchor="middle"
+    font-family="Georgia, 'Times New Roman', serif"
+    font-size="250"
+    font-weight="bold"
+    fill="#141413"
+  >P</text>
+  <!-- Fio Editorial de Rodapé -->
+  <line x1="92" y1="388" x2="400" y2="388" stroke="#141413" stroke-width="8" stroke-linecap="round" />
+</svg>
+
