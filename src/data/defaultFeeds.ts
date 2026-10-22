@@ -79,6 +79,16 @@ export const DEFAULT_FEEDS: FeedSource[] = [
   // ESQUERDA POLÍTICA
   // ==========================================
   {
+    id: 'the-intercept-brasil',
+    name: 'The Intercept Brasil',
+    url: 'https://www.intercept.com.br/feed/',
+    fallbackUrl:
+      'https://news.google.com/rss/search?q=site:intercept.com.br&hl=pt-BR&gl=BR&ceid=BR:pt-419',
+    category: 'Esquerda Política',
+    color: 'coral',
+    enabled: true,
+  },
+  {
     id: 'brasil-247',
     name: 'Brasil 247',
     url: 'https://news.google.com/rss/search?q=site:brasil247.com&hl=pt-BR&gl=BR&ceid=BR:pt-419',
@@ -376,6 +386,16 @@ export const DEFAULT_FEEDS: FeedSource[] = [
     name: 'Gizmodo',
     url: 'https://gizmodo.com/feed',
     fallbackUrl: 'https://gizmodo.uol.com.br/feed/',
+    category: 'Tecnologia',
+    color: 'slate',
+    enabled: true,
+  },
+  {
+    id: 'outer-space',
+    name: 'Outer Space',
+    url: 'https://www.outerspace.com.br/feed/',
+    fallbackUrl:
+      'https://news.google.com/rss/search?q=site:outerspace.com.br&hl=pt-BR&gl=BR&ceid=BR:pt-419',
     category: 'Tecnologia',
     color: 'slate',
     enabled: true,

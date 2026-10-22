@@ -201,7 +201,7 @@ export const useNewsStore = create<NewsState>()(
       clearReadHistory: () => set({ readArticleIds: [] }),
     }),
     {
-      name: 'panorama-storage-v12',
+      name: 'panorama-storage-v13',
     }
   )
 );

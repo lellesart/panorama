@@ -349,6 +349,7 @@ export function App() {
       .trim();
     const isPlaceholderSnippet = plainText.startsWith('Cobertura atualizada em ');
 
+    // Se o feed trouxe apenas um resumo curto ou não trouxe foto, extrai a matéria completa
     if (plainText.length < 700 || isPlaceholderSnippet || !article.thumbnail) {
       setIsLoadingArticleBody(true);
       const extracted = await fetchFullArticleContent(article);
